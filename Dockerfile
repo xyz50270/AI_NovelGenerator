@@ -9,9 +9,11 @@
 FROM node:20-slim AS frontend-builder
 WORKDIR /app/frontend
 
-# 先只复制依赖清单，利用层缓存
+# 先只复制依赖清单，利用层缓存。
+# 注意用 npm install 而非 npm ci：上游 package-lock.json 与 package.json 存在不同步，
+# npm ci 会因 lock 校验失败直接中止。
 COPY frontend/package.json frontend/package-lock.json ./
-RUN npm ci
+RUN npm install
 
 COPY frontend/ ./
 
