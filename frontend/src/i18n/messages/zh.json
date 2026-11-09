@@ -3755,6 +3755,7 @@
         "limitArc": "请选择当前篇章内的 1–20 个章节。",
         "title": "逐章写作",
         "start": "开始写作",
+        "batchStart": "批量开始",
         "next": "继续下一部分",
         "resume": "继续审阅",
         "reviewList": "重新审阅列表",

@@ -266,7 +266,8 @@ async def load_task_context(task: str, parameters: dict[str, Any], scope: dict[s
         if key == "user_guidance":
             value = value or "无"
         elif isinstance(value, (dict, list, bool)) or (value is None and key not in {"character_count", "faction_count", "item_count", "core_rule_count"}):
-            value = json.dumps(value, ensure_ascii=False, sort_keys=True)
+            # default=str 兜底：历史脏数据（如 ObjectId 型 volume_id）不应让整个生成失败
+            value = json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
         ports[key] = value
     return TaskContext(request, gen, data, ports, extra)
 

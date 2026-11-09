@@ -52,7 +52,7 @@ class SearchArgs(AssistantModel):
 
 class ReadArgs(ResourceRef):
     """只读指定字段；长文按范围继续。"""
-    fields: list[str] = Field(default_factory=list, max_length=20)
+    fields: list[str] = Field(default_factory=list, max_length=20, description="字段名必须来自 describe_resource 返回的 properties，不能凭常识猜测；枚举字段取值须原样复制返回的 enum。不确定就先调用 describe_resource。")
     start: int = Field(default=0, ge=0)
     length: int = Field(default=6000, ge=1, le=12000)
     deleted: bool = False
@@ -114,7 +114,7 @@ class TaskArgs(AssistantModel):
 
 class RunTaskArgs(TaskArgs):
     """只提供开始表单与原按钮位置，不接受客户端伪造候选依据。"""
-    inputs: dict[str, Any] = Field(default_factory=dict)
+    inputs: dict[str, Any] = Field(default_factory=dict, description="inputs 的键必须来自该任务的开始表单，先用 describe_generation_task 或 list_generation_tasks 查看可用字段，不要猜；只填表单声明的字段，多余键会被拒绝。")
     target: ResourceRef | None = None
     target_field: str | None = None
     depends_on: list[str] = Field(default_factory=list, max_length=20)
@@ -122,7 +122,7 @@ class RunTaskArgs(TaskArgs):
 
 class PositionChoice(AssistantModel):
     """问题中的真实位置选项；显示名称由服务端读取。"""
-    position: dict[str, Any]
+    position: dict[str, Any] = Field(description="结构必须是 {version:1, intent:<intent>, target_type:<type>, target_id:<id>}。intent 只能取 book_start / volume_start / chapter_before / chapter_after（不能写 after、before）。target_type 必须与 intent 匹配：book_start 对应 novel，volume_start 对应 volume，chapter_before 与 chapter_after 对应 chapter。target_id 是对应的真实 ID。不要再放 chapter_id、chapter_number 等其它键，多余键会被拒绝。")
 
 
 class ChapterRevisionArgs(AssistantModel):
@@ -153,42 +153,42 @@ class FactReadArgs(AssistantModel):
     """查询真实位置的三类事实，不使用主档镜像推断剧情状态。"""
     resource_type: Literal["character", "character_relation", "item", "faction"]
     ids: list[str] = Field(min_length=1, max_length=20)
-    position: dict[str, Any] | None = None
+    position: dict[str, Any] | None = Field(default=None, description="结构必须是 {version:1, intent:<intent>, target_type:<type>, target_id:<id>}。intent 只能取 book_start / volume_start / chapter_before / chapter_after（不能写 after、before）。target_type 必须与 intent 匹配：book_start 对应 novel，volume_start 对应 volume，chapter_before 与 chapter_after 对应 chapter。target_id 是对应的真实 ID。不要再放 chapter_id、chapter_number 等其它键，多余键会被拒绝。 查询某个位置的事实时必须给出；省略则读服务端解析的最新位置。")
 
 
 TOOL_CONTRACTS = {
     "read_chapter_revision": (ChapterRevisionArgs, "读取当前作品的真实章节历史，可按 chapter_id 或作者说的全书 chapter_number 指定。返回真实章号和稳定身份，不传 version 时列版本；指定 version、start、length 返回不可变原文和服务端生成 evidence，可取其中原样子片段用于章后事实；摘要不能作证据。"),
     "reconcile_changes": (ReviewArgs, "修改冲突时先查原回执，再比较原值、拟改值、当前值。未知结果禁止另建；无重叠可重准备，真实冲突用人话 ask_user。"),
     "query_facts": (FactReadArgs, "读取人物、人物关系、势力或物品在明确位置的值和来源，未指定位置则读服务端解析的最新位置。"),
-    "stage_fact_change": (FactChangeRequest, "单项新人物/关系/势力/物品及实际状态修改使用此工具；批量人物/关系/势力和卷参与计划使用对应 run_generation_task，不拆成逐项保存。先 query_facts，位置不明确则 ask_user。人工说明由服务器使用作者原话；章后依据须为真实不可变正文。不能提供 confirmed、basis 或伪造来源。"),
+    "stage_fact_change": (FactChangeRequest, "人物实际事实字段（gender, age_group, race, identity, appearance, personality, core_desire, core_fear, strengths, weaknesses, abilities, psychological_state, public_state, hidden_state, actual_goal）的建立与变更只能使用本工具，不能用 stage_update 改主档；单项新人物/关系/势力/物品及实际状态修改也使用此工具；批量人物/关系/势力和卷参与计划使用对应 run_generation_task，不拆成逐项保存。先 query_facts，位置不明确则 ask_user。人工说明由服务器使用作者原话；章后依据须为真实不可变正文。不能提供 confirmed、basis 或伪造来源。"),
     "get_book_overview": (EmptyArgs, "读取当前小说的小型概览和各类资料数量，不展开正文。"),
-    "list_resources": (CatalogueArgs, "按类型、文字、位置分页查询摘要目录；每页默认20、最多50条。"),
+    "list_resources": (CatalogueArgs, "按类型、文字、位置分页查询摘要目录；每页默认20、最多50条。只返回摘要与定位，不含正文；需要具体内容再用 read_resource 指定 fields。"),
     "describe_resource": (KindArgs, "查看原业务创建、更新字段定义，准备修改前先了解字段。"),
-    "search_resources": (SearchArgs, "在实际保存的业务字段中搜索普通文字，返回带来源的片段。"),
-    "read_resource": (ReadArgs, "按明确 fields 读取业务资料；不传字段仅返回摘要。总量默认6000、最多12000字符。"),
-    "read_text_range": (ReadArgs, "按字段和字符范围读取长文，继续时使用 next_start。"),
+    "search_resources": (SearchArgs, "在实际保存的业务字段中搜索普通文字，返回带来源的片段。只用于定位，不能作为修改依据；检索结果变化后需重新检索。"),
+    "read_resource": (ReadArgs, "按明确 fields 读取业务资料；不传字段仅返回摘要。总量默认6000、最多12000字符。fields 的键必须来自 describe_resource 的真实字段，猜错会报 ASSISTANT_FIELD_UNKNOWN；长文超限时用 read_text_range 按 next_start 续读。"),
+    "read_text_range": (ReadArgs, "按字段和字符范围读取长文，继续时使用 next_start。start 按 Unicode 码点计，必须来自上次返回的 next_start，不能自己估。"),
     "find_references": (ReferenceArgs, "查找直接引用此对象的资料；返回分页目录，需要再读具体字段。"),
-    "read_relations": (RelationsArgs, "查询当前小说中的人物关系、势力关系或绑定摘要。"),
-    "read_volume_states": (StatesArgs, "查询指定卷内的角色或势力状态摘要。"),
+    "read_relations": (RelationsArgs, "查询当前小说中的人物关系、势力关系或绑定摘要。只给摘要，需要细节再用 read_resource。"),
+    "read_volume_states": (StatesArgs, "查询指定卷内的角色或势力状态摘要。只给摘要，需要细节再用 read_resource。"),
     "get_readiness": (ResourceRef, "读取卷、篇章、场景或章节的原生成前置条件，错误不当成资料缺失。"),
     "get_resource_summary": (ResourceRef, "按需生成资料摘要并按内容指纹缓存；可能调用模型，明确标记未读范围。"),
-    "stage_create": (StageArgs, "准备增改组，以新建开始；同组依赖按顺序排列，前项 new_ 临时ID可被后项引用，不直接写业务资料。"),
-    "stage_update": (StageArgs, "准备增改组，以更新开始；只提交明确字段，同组可包含有关联的其它操作，不直接保存。"),
-    "stage_text_edit": (TextEditArgs, "按精确旧文字和字符范围修改管理资料。章节正文必须明确选择创作位置并调用 run_generation_task。"),
-    "stage_delete": (StageArgs, "准备回收组，必须等待作者逐次确认，不提供永久删除。"),
-    "stage_restore": (StageArgs, "准备恢复组，必须等待作者逐次确认。"),
-    "stage_reorder": (StageArgs, "准备完整同父对象排序，fields.ids为期望顺序的完整ID列表。"),
-    "stage_status_change": (StageArgs, "准备原业务状态变化，字段和允许状态以业务定义为准。"),
+    "stage_create": (StageArgs, "准备增改组，以新建开始；同组依赖按顺序排列，前项 new_ 临时ID可被后项引用，不直接写业务资料。字段键名取自 describe_resource 的 create schema，多余键会被拒绝。"),
+    "stage_update": (StageArgs, "准备增改组，以更新开始；只提交明确字段，同组可包含有关联的其它操作，不直接保存。人物的 gender, age_group, race, identity, appearance, personality, core_desire, core_fear, strengths, weaknesses, abilities, psychological_state, public_state, hidden_state, actual_goal 这 15 个事实字段不能用本工具改，只要它们已有带剧情位置的事实记录就必须改用 stage_fact_change；本工具只改名称、别名、角色类型、重要度等主档管理字段。"),
+    "stage_text_edit": (TextEditArgs, "按精确旧文字和字符范围修改管理资料。章节正文必须明确选择创作位置并调用 run_generation_task。旧文字必须与原文逐字一致（含空白换行）。"),
+    "stage_delete": (StageArgs, "准备回收组，必须等待作者逐次确认，不提供永久删除；删除有下级内容时会被阻止，需先处理下级。"),
+    "stage_restore": (StageArgs, "准备恢复组，必须等待作者逐次确认；恢复到原父级末尾，父级已删除时会被拒绝。"),
+    "stage_reorder": (StageArgs, "准备完整同父对象排序，fields.ids 为期望顺序的完整 ID 列表；必须包含该父级下全部同级对象，缺少或多出都会被拒绝。"),
+    "stage_status_change": (StageArgs, "准备原业务状态变化，字段和允许状态以业务定义为准；不确定合法状态时先用 describe_resource 查看枚举。"),
     "stage_preparation_confirmation": (StageArgs, "准备卷内资料确认，fields.kind为factions、characters或locations，地点可附location_ids。"),
-    "list_generation_tasks": (EmptyArgs, "列出可复用的原 AI 任务，不运行模型。"),
+    "list_generation_tasks": (EmptyArgs, "列出可复用的原 AI 任务，不运行模型。配合 describe_generation_task 查看某个任务的开始表单。"),
     "describe_generation_task": (TaskArgs, "读取原任务实际开始表单、默认方案和自定义方案修订。"),
     "run_generation_task": (RunTaskArgs, "执行原任务图。正文及逐级规划必须匹配作者本轮 writing_target，只采用原作者消息和有界数量，不采用模型补写的自由文本；depends_on里的前组必须已保存。"),
     "find_affected_resources": (ChangeArgs, "从修改目标的直接引用、父链、名称和别名查找潜在影响，结果不是已经确认的内容冲突。"),
-    "review_changes": (ReviewArgs, "用原服务在回滚事务中预演，再独立检查内容；编辑后必须重新审核。"),
+    "review_changes": (ReviewArgs, "用原服务在回滚事务中预演，再独立检查内容；编辑后必须重新审核。审核只能引用本次真实读过的资料（source_refs 白名单），引用未读资料会被拒绝；预演前若检索结果变化需重新检索。"),
     "apply_changes": (ReviewArgs, "仅在本轮自动模式且审核无明确冲突时保存；回收、恢复仍只由作者确认。"),
-    "prepare_undo": (ChangeArgs, "按原回执和当前版本准备反向候选，新增资料的撤销使用回收，不直接覆盖后续修改。"),
+    "prepare_undo": (ChangeArgs, "按原回执和当前版本准备反向候选，新增资料的撤销使用回收，不直接覆盖后续修改。撤销同样要经过审核与作者确认。"),
     "ask_user": (AskArgs, "确有缺失决定时提问并暂停原任务。事实位置可用 position_choices 列真实章节；风险批准指定 confirmation_change_id，由服务器展示该修订的实际影响。一般澄清不要指定。"),
-    "navigate_to_resource": (NavigationTarget, "仅在作者本轮允许跳转时定位资料，普通查询不切换页面。"),
+    "navigate_to_resource": (NavigationTarget, "仅在作者本轮允许跳转时定位资料，普通查询不切换页面。不允许跳转时只返回定位按钮，不要假装已跳转。"),
     "finish_turn": (FinishArgs, "结束本轮，说明已保存、待审核、建议和未检查范围，不把候选说成已保存。"),
 }
 

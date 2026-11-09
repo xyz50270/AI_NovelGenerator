@@ -206,7 +206,7 @@ async def ensure_character_fields_unmanaged(
             raise DomainApiError("CHARACTER_FACT_RECORD_INVALID", "人物确认记录格式不正确，请检查记录", status_code=409) from exc
         managed.update(requested & record["after"].keys())
     if managed:
-        raise DomainApiError("CHARACTER_FACT_MANAGED_FIELDS", "这些字段已有明确剧情位置，请从人物事实中更正：" + "、".join(sorted(managed)), status_code=409)
+        raise DomainApiError("CHARACTER_FACT_MANAGED_FIELDS", "这些字段已有明确剧情位置，不能直接改人物主档；请改用 stage_fact_change 从人物事实中更正：" + "、".join(sorted(managed)), status_code=409)
     if protect:
         await protect_chapter_record_sources({("novels", novel_id): chain[0][1]}, session=session)
 

@@ -52,6 +52,7 @@ class _AgentState:
     provider_config: Any
     round_limit: int
     call_limit: int
+    auto_extended_count: int = 0
     completed_nodes: dict[str, Any] = field(default_factory=dict)
     reads: list[dict[str, Any]] = field(default_factory=list)
     history: list[dict[str, Any]] | None = None
@@ -302,7 +303,19 @@ async def execute_agent(
         while True:
             if not state.pending_calls:
                 if state.round >= state.round_limit:
-                    raise DomainApiError("AGENT_ROUND_BUDGET_EXCEEDED", "资料整理已达到轮次上限，可选择增加轮数继续整理", status_code=422)
+                    from backend.config.config import get_all_config
+                    cfg_all = get_all_config()
+                    auto_extend = bool(cfg_all.get("agent_auto_extend_enabled", False))
+                    add_rounds = min(16, max(1, int(cfg_all.get("agent_auto_extend_rounds", 16))))
+                    max_times = min(10, max(1, int(cfg_all.get("agent_max_auto_extend_times", 1))))
+                    if auto_extend and state.auto_extended_count < max_times:
+                        state.auto_extended_count += 1
+                        state.round_limit += add_rounds
+                        state.call_limit += 3 * add_rounds
+                        logger.info("[资料整理自动追加轮次] task=%s node=%s 第 %d/%d 次追加 %d 轮, 新轮次上限=%d, 工具上限=%d", models.task, instance_path, state.auto_extended_count, max_times, add_rounds, state.round_limit, state.call_limit)
+                        yield {"status": "progress", "message": f"资料整理已达初始轮次上限，已自动追加 {add_rounds} 轮继续整理（第 {state.auto_extended_count}/{max_times} 次）"}
+                    else:
+                        raise DomainApiError("AGENT_ROUND_BUDGET_EXCEEDED", "资料整理已达到轮次上限，可选择增加轮数继续整理", status_code=422)
                 yield {"status": "progress", "round": state.round + 1, "call_count": state.total_calls,
                        "provider": provider, "model": request.model or config.default_model, "message": "正在整理资料"}
                 await validate_reads_before_send()
@@ -369,8 +382,19 @@ async def execute_agent(
                     raise DomainApiError("AGENT_RESULT_MISSING", "模型未完成资料工具调用，请重试或检查模型的 Function Calling 设置", status_code=502)
             unstarted_calls = len(state.pending_calls) - state.pending_index - int(state.pending_started)
             if state.total_calls + unstarted_calls > state.call_limit:
-                # assistant 已产生这批调用，保留整轮调用与原始 ID，续跑先执行它们而不是再问一次模型。
-                raise DomainApiError("AGENT_TOOL_BUDGET_EXCEEDED", "资料整理已达到工具调用上限，可选择增加轮数继续整理", status_code=422)
+                from backend.config.config import get_all_config
+                cfg_all = get_all_config()
+                auto_extend = bool(cfg_all.get("agent_auto_extend_enabled", False))
+                add_rounds = min(16, max(1, int(cfg_all.get("agent_auto_extend_rounds", 16))))
+                max_times = min(10, max(1, int(cfg_all.get("agent_max_auto_extend_times", 1))))
+                if auto_extend and state.auto_extended_count < max_times:
+                    state.auto_extended_count += 1
+                    state.round_limit += add_rounds
+                    state.call_limit += 3 * add_rounds
+                    logger.info("[资料整理自动追加工具调用] task=%s node=%s 第 %d/%d 次追加 %d 轮, 新轮次上限=%d, 工具上限=%d", models.task, instance_path, state.auto_extended_count, max_times, add_rounds, state.round_limit, state.call_limit)
+                    yield {"status": "progress", "message": f"资料整理已达工具调用上限，已自动追加 {add_rounds} 轮继续整理（第 {state.auto_extended_count}/{max_times} 次）"}
+                else:
+                    raise DomainApiError("AGENT_TOOL_BUDGET_EXCEEDED", "资料整理已达到工具调用上限，可选择增加轮数继续整理", status_code=422)
             while state.pending_index < len(state.pending_calls):
                 call = state.pending_calls[state.pending_index]
                 await asyncio.sleep(0)

@@ -140,6 +140,9 @@ class ConfigPatch(BaseModel):
     mongo_timeout_ms: int | None = Field(default=None, gt=0)
     mongo_transaction_mode: Literal["auto", "required", "disabled"] | None = None
     llm: LLMConfigPatch | None = None
+    agent_auto_extend_enabled: bool | None = None
+    agent_auto_extend_rounds: int | None = Field(default=None, ge=1, le=16)
+    agent_max_auto_extend_times: int | None = Field(default=None, ge=1, le=10)
     provider_renames: list[ProviderRenameRequest] | None = Field(
         default=None,
         alias="_provider_renames",

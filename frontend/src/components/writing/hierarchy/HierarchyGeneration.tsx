@@ -29,6 +29,10 @@ interface GenerationProps {
   node: HierarchyNode; choices: EntityChoices; choicesError?: string; fixedSetup?: GenerationSetup; planOrigin?: PlanGenerationOrigin;
   onSetup?: (setup: GenerationSetup) => Promise<void>;
   onPageChange?: (visible: boolean) => void;
+  /** 批量写作：进入本弹窗后自动发起生成。 */
+  autoRun?: boolean;
+  /** 批量写作：候选生成后自动确认保存。 */
+  autoConfirm?: boolean;
   onSaved: (records: HierarchyRecord[], kind: HierarchyNode["kind"], confirmationKey: string, confirmedIds?: string[], planOrigin?: PlanGenerationOrigin) => void | Promise<void>; onClose: () => void;
 }
 // 本机存储失败时，重开同一章仍保留已收到的正式响应。
@@ -40,7 +44,7 @@ export default function HierarchyGeneration(props: GenerationProps) {
   return <GenerationEditor key={`${props.node.record.novel_id}:${props.node.kind}:${props.node.id}`} {...props} />;
 }
 
-function GenerationEditor({ node, choices, choicesError, fixedSetup, planOrigin, onSetup, onSaved, onClose, onPageChange }: GenerationProps) {
+function GenerationEditor({ node, choices, choicesError, fixedSetup, planOrigin, onSetup, onSaved, onClose, onPageChange, autoRun, autoConfirm }: GenerationProps) {
   const t = useTranslations("writing.hierarchy");
   const active = useContext(RetainedViewActive);
   const flow = useTaskFlow(TASKS[node.kind]);
@@ -198,6 +202,7 @@ function GenerationEditor({ node, choices, choicesError, fixedSetup, planOrigin,
       if (abort.signal.aborted) return;
       const result = generated.result as HierarchyPreview;
       if (!result?.basis || !result.candidate || (node.kind === "chapter" ? typeof result.candidate.content !== "string" : !Array.isArray(result.candidate[candidateKey]))) throw new Error(t("invalidResult"));
+      generatedHere.current = true;
       setPreview(result); setSelected(0); command.current = null;
       setReviewState(result.coverage_review ? { candidate_snapshot: JSON.stringify(result.candidate), needs_recheck: false, targets_aligned: true } : null);
     } catch (failure) {
@@ -327,6 +332,7 @@ function GenerationEditor({ node, choices, choicesError, fixedSetup, planOrigin,
 
   const discardCandidate = async () => {
     if (candidateLocked || savingRef.current) return;
+    autoBlocked.current = true;
     savingRef.current = true; setSaving(true);
     try {
       await writes.current;
@@ -338,6 +344,28 @@ function GenerationEditor({ node, choices, choicesError, fixedSetup, planOrigin,
     } catch (failure) { setError(failure instanceof Error ? failure.message : t("draftFailed")); }
     finally { savingRef.current = false; if (mounted.current) setSaving(false); }
   };
+
+  // 批量写作编排：首章由作者点击生成，其余章节自动生成并自动确认保存。
+  const autoRunFlag = useRef(false); autoRunFlag.current = Boolean(autoRun);
+  const autoConfirmFlag = useRef(false); autoConfirmFlag.current = Boolean(autoConfirm);
+  const autoStage = useRef<"generate" | "confirm" | null>(null);
+  const autoBlocked = useRef(false);
+  const generatedHere = useRef(false);
+  useEffect(() => { if (error) autoBlocked.current = true; }, [error]);
+  const shouldAutoGenerate = autoRunFlag.current && !preview && !running && !loading && restored && !error && !flowLoading && Boolean(flow.definition) && setupMatches && !completed.current;
+  // 只自动确认本次弹窗真正生成过的候选，避免误提交历史草稿。
+  const shouldAutoConfirm = autoConfirmFlag.current && generatedHere.current && Boolean(preview) && !saving && !candidateLocked && !stale && !legacyBasisMissing;
+  useEffect(() => {
+    if (autoBlocked.current) return;
+    if (shouldAutoGenerate) {
+      if (autoStage.current !== "generate") { autoStage.current = "generate"; void generate(); }
+      return;
+    }
+    if (shouldAutoConfirm) {
+      if (autoStage.current !== "confirm") { autoStage.current = "confirm"; void confirm(); }
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shouldAutoGenerate, shouldAutoConfirm]);
 
   useEffect(() => {
     onPageChange?.(inPage && active);
@@ -412,7 +440,7 @@ function GenerationEditor({ node, choices, choicesError, fixedSetup, planOrigin,
           {!preview && <TaskFlowProgress flow={flow} running={running} failed={Boolean(error)} onRetry={() => void generate(true)} onContinue={(additionalRounds) => void generate({ continuation: true, additionalRounds })} onDiscard={() => { void flow.discard(); setError(""); setErrors({}); setInPage(false); }} />}
   </> : null;
   const generationActions = <>
-          {running ? <Button size="sm" variant="outline" onPress={() => { controller.current?.abort(); void flow.discard(); setInPage(false); }}>{t("cancelGeneration")}</Button> : <Button size="sm" variant="ghost" isDisabled={saving} onPress={() => void close()}>{t("closeKeepDraft")}</Button>}
+          {running ? <Button size="sm" variant="outline" onPress={() => { autoBlocked.current = true; controller.current?.abort(); void flow.discard(); setInPage(false); }}>{t("cancelGeneration")}</Button> : <Button size="sm" variant="ghost" isDisabled={saving} onPress={() => void close()}>{t("closeKeepDraft")}</Button>}
           {preview && <Button size="sm" variant="ghost" onPress={() => {
             const blob = new Blob([JSON.stringify({ ...preview, ...(reviewState ? { review_state: reviewState } : {}) }, null, 2)], { type: "application/json;charset=utf-8" });
             const url = URL.createObjectURL(blob); const link = document.createElement("a");

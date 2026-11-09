@@ -1,3 +1,7 @@
+from backend.api.default_routers.reader_router import router as reader_router
+import pathlib
+if not hasattr(pathlib.Path, "is_junction"):
+    pathlib.Path.is_junction = lambda self: False
 """后端应用装配、路由注册和启动过程。"""
 
 import logging
@@ -89,7 +93,7 @@ from backend.runtime import (
 apply_runtime_flags_from_argv()
 
 logger = logging.getLogger(__name__)
-BACKEND_HOST = "127.0.0.1"
+BACKEND_HOST = os.getenv("NOVEL_GENERATOR_BACKEND_HOST", "0.0.0.0")
 BACKEND_PORT = get_backend_port()
 FRONTEND_PORT = get_frontend_port()
 FRONTEND_ORIGINS = [
@@ -166,10 +170,24 @@ async def require_database(request: Request, call_next):
     return await call_next(request)
 
 
-# CORS 与启动器选定的前端端口保持一致，同时兼容 localhost 与 IPv4 回环地址。
+# 生产部署下前端与后端同源（Nginx 统一入口），浏览器不会发起跨域请求，因此无需宽泛放行。
+# 仅放行 localhost、IPv4 私网与显式追加的来源，避免任意网页借用户浏览器读写本服务。
+# 需要额外域名时用 NOVEL_GENERATOR_ALLOWED_ORIGINS 追加（逗号分隔，含协议与端口）。
+_EXTRA_ORIGINS = [
+    origin.strip()
+    for origin in os.getenv("NOVEL_GENERATOR_ALLOWED_ORIGINS", "").split(",")
+    if origin.strip()
+]
+_PRIVATE_ORIGIN_REGEX = (
+    r"^https?://(localhost|127\.0\.0\.1"
+    r"|192\.168\.\d{1,3}\.\d{1,3}"
+    r"|10\.\d{1,3}\.\d{1,3}\.\d{1,3}"
+    r"|172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3})(:\d+)?$"
+)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=FRONTEND_ORIGINS,
+    allow_origins=[*FRONTEND_ORIGINS, *_EXTRA_ORIGINS],
+    allow_origin_regex=_PRIVATE_ORIGIN_REGEX,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -187,6 +205,7 @@ async def startup_status():
 # Register routes
 app.mount("/static/covers", StaticFiles(directory=str(COVERS_DIR), check_dir=False), name="static_covers")
 
+app.include_router(reader_router)
 app.include_router(novel_router)
 app.include_router(initialization_router)
 app.include_router(volume_router)

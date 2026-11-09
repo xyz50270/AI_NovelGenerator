@@ -186,7 +186,9 @@ def faction_design_content(document: dict[str, Any], fields: Sequence[str]) -> d
     result = {name: document.get(name) for name in fields if name in allowed}
     result["unlocated_profile"] = {name: document.get(name) for name in fields if name not in allowed}
     result["content_semantics"] = "whole_book_design_with_unlocated_profile"
-    return result
+    # BSON 归一化，避免脏 ObjectId 流入提示词序列化：历史数据里 volume_id 可能存成
+    # ObjectId（faction_fact_service 直写路径未类型转换），json.dumps 会直接抛 TypeError。
+    return json.loads(json.dumps(result, ensure_ascii=False, default=str))
 
 
 def faction_position_content(document: dict[str, Any], facts: dict[str, Any]) -> dict[str, Any]:

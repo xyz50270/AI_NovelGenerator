@@ -128,6 +128,9 @@ export interface AppConfig {
   mongo_database_name: string;
   mongo_timeout_ms: number;
   mongo_transaction_mode?: "auto" | "required" | "disabled";
+  agent_auto_extend_enabled?: boolean;
+  agent_auto_extend_rounds?: number;
+  agent_max_auto_extend_times?: number;
   llm: LLMConfig;
   [key: string]: unknown;
 }
@@ -147,6 +150,9 @@ export interface AppConfigPatch {
   mongo_database_name?: string;
   mongo_timeout_ms?: number;
   mongo_transaction_mode?: "auto" | "required" | "disabled";
+  agent_auto_extend_enabled?: boolean;
+  agent_auto_extend_rounds?: number;
+  agent_max_auto_extend_times?: number;
   llm?: {
     default_provider?: string;
     format_review_provider?: string;
@@ -210,6 +216,15 @@ export function buildConfigSavePayload(
   if (config.mongo_timeout_ms !== original.mongo_timeout_ms) patch.mongo_timeout_ms = config.mongo_timeout_ms;
   if (config.mongo_transaction_mode !== undefined && config.mongo_transaction_mode !== original.mongo_transaction_mode) {
     patch.mongo_transaction_mode = config.mongo_transaction_mode;
+  }
+  if (config.agent_auto_extend_enabled !== undefined && config.agent_auto_extend_enabled !== original.agent_auto_extend_enabled) {
+    patch.agent_auto_extend_enabled = config.agent_auto_extend_enabled;
+  }
+  if (config.agent_auto_extend_rounds !== undefined && config.agent_auto_extend_rounds !== original.agent_auto_extend_rounds) {
+    patch.agent_auto_extend_rounds = config.agent_auto_extend_rounds;
+  }
+  if (config.agent_max_auto_extend_times !== undefined && config.agent_max_auto_extend_times !== original.agent_max_auto_extend_times) {
+    patch.agent_max_auto_extend_times = config.agent_max_auto_extend_times;
   }
 
   const llm: NonNullable<AppConfigPatch["llm"]> = {};

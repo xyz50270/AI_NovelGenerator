@@ -1,3 +1,4 @@
+import Script from "next/script";
 import { hasLocale } from "next-intl";
 import { notFound } from "next/navigation";
 import { getMessages, getTranslations, setRequestLocale } from "next-intl/server";
@@ -43,6 +44,10 @@ export default async function LocaleLayout({
 
   return (
     <html lang={locale} className="h-full antialiased" suppressHydrationWarning>
+      <head>
+        {/* 局域网 HTTP 下 crypto.subtle / randomUUID 不可用，需在业务脚本前注入兼容实现 */}
+        <Script src="/compat.js" strategy="beforeInteractive" />
+      </head>
       <body className="min-h-full flex flex-col bg-background text-foreground">
         <NextIntlClientProvider messages={messages}>
           <Providers locale={locale}>

@@ -3754,6 +3754,7 @@
         "scopeArc": "Current arc",
         "restartList": "The structure changed after opening this chapter. Abandon the list and select the chapters again. Chapter drafts are kept.",
         "start": "Start writing",
+        "batchStart": "Batch start",
         "next": "Continue to next part",
         "resume": "Continue review",
         "reviewList": "Review chapter list",

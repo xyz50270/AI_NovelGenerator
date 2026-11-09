@@ -100,7 +100,7 @@ class ChangeOperation(AssistantModel):
     id: str | None = Field(default=None, max_length=100)
     parent_id: str | None = Field(default=None, max_length=100)
     temporary_id: str | None = Field(default=None, pattern=r"^new_[A-Za-z0-9_]{1,60}$")
-    fields: dict[str, Any] = Field(default_factory=dict)
+    fields: dict[str, Any] = Field(default_factory=dict, description="键名必须来自 describe_resource 返回的真实字段，不能猜（如 role_type 不是 role）；枚举取值原样复制 enum。")
     reason: str = Field(min_length=1, max_length=2000)
 
     @model_validator(mode="after")
@@ -169,9 +169,9 @@ class FactChangeRequest(AssistantModel):
     resource_type: Literal["character", "character_relation", "item", "faction"]
     operation: Literal["create", "establish", "correct_initial", "change", "replace"]
     id: str | None = None
-    candidate: dict[str, Any] | None = None
-    position: dict[str, Any]
-    after: dict[str, Any]
-    replaces: dict[str, str] | str | None = None
-    resolves: dict[str, list[str]] | list[str] | None = None
-    evidence: dict[str, Any] | None = None
+    candidate: dict[str, Any] | None = Field(default=None, description="新建人物/势力/物品时的完整档案字段，键名取自 describe_resource 的 create schema；operation 为 create 时必填。与 after 至少填一个。")
+    position: dict[str, Any] = Field(description="结构必须是 {version:1, intent:<intent>, target_type:<type>, target_id:<id>}。intent 只能取 book_start / volume_start / chapter_before / chapter_after（不能写 after、before）。target_type 必须与 intent 匹配：book_start 对应 novel，volume_start 对应 volume，chapter_before 与 chapter_after 对应 chapter。target_id 是对应的真实 ID。不要再放 chapter_id、chapter_number 等其它键，多余键会被拒绝。")
+    after: dict[str, Any] = Field(description="本次要写入的新字段值，键名必须是真实事实字段（identity、psychological_state、public_state、hidden_state、actual_goal 等），只放实际要改的项，不要整份回填。operation 为 change/replace/correct_initial 时必填。")
+    replaces: dict[str, str] | str | None = Field(default=None, description="仅当同位置已有该字段的确认（报 CHARACTER_FACT_POSITION_CONFLICT）时填写，声明替代哪条原记录：可传记录 history_id 字符串，或 {字段: 原记录 history_id} 映射。")
+    resolves: dict[str, list[str]] | list[str] | None = Field(default=None, description="要同时标记为已解决的缺项或冲突引用 ID；不确定就留空，不要编造。")
+    evidence: dict[str, Any] | None = Field(default=None, description="章后的真实依据，必须先用 read_chapter_revision 读取该章固定历史版本，再用它返回的 evidence 原样填入。结构为 {chapter_id:str, version:int, revision_id:str, content_hash:str, start:int, quote:str}。五个字段全部必填；quote 必须是原文子串，start 按 Unicode 码点计。不得自己编造或只填 chapter_id 与 version。")

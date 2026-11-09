@@ -59,6 +59,14 @@ export default function ChapterContinuation({ scene: selectedScene, arc, scope: 
   const [batchChanged, setBatchChanged] = useState(false);
   const [changedBodies, setChangedBodies] = useState<HierarchyRecord[]>([]);
   const [target, setTarget] = useState<HierarchyNode | null>(null);
+  /** 批量写作：当前批次是否连续自动跑完剩余章节。 */
+  const [batchRun, setBatchRun] = useState(false);
+  /** 批量写作：下一个章节弹窗是否自动发起生成。 */
+  const [autoRunNext, setAutoRunNext] = useState(false);
+  const batchRunRef = useRef(false);
+  batchRunRef.current = batchRun;
+  // 记录已自动发起过的章节，防止 effect 重复触发。
+  const batchKick = useRef<string | null>(null);
   const draftRef = useRef(draft);
   const stateRef = useRef({ active, open, dirty, readBlocked }); stateRef.current = { active, open, dirty, readBlocked };
   const operation = useRef<AbortController | null>(null);
@@ -319,7 +327,26 @@ export default function ChapterContinuation({ scene: selectedScene, arc, scope: 
     finally { if (operation.current === abort) { operation.current = null; setBusy(false); } }
   };
 
-  const close = () => { if (stoppingRef.current) return; operation.current?.abort(); operation.current = null; setTarget(null); onClose(); };
+  const close = () => { if (stoppingRef.current) return; operation.current?.abort(); operation.current = null; setTarget(null); setBatchRun(false); setAutoRunNext(false); onClose(); };
+  useEffect(() => {
+    if (!batchRunRef.current || target || !loaded || busy || !active || !open) return;
+    // 出现任何错误立即停止自动续章，避免反复重试同一章。
+    if (error || readError) { setBatchRun(false); setAutoRunNext(false); return; }
+    if (operation.current || stoppingRef.current || completion.current) return;
+    if (dirty || needsReview || draft.needsRead || readBlocked) return;
+    // 只有已经开始且当前没有进行中的章节时才续跑。
+    if (!draft.started || draft.currentId) return;
+    const nextItem = draft.selected.find((item) => !draft.completed.some((entry) => entry.id === item.id));
+    if (!nextItem) { setBatchRun(false); setAutoRunNext(false); return; }
+    // 同一章只自动发起一次，避免 effect 重跑造成重复请求。
+    if (batchKick.current === nextItem.id) return;
+    batchKick.current = nextItem.id;
+    // 下一章的弹窗复用首章确认过的流程配置，并自动生成、自动保存。
+    setAutoRunNext(true);
+    void startOrContinue();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [batchRun, target, loaded, busy, active, open, dirty, needsReview, draft, readBlocked, error, readError]);
+
   const completedCount = draft.selected.filter((item) => draft.completed.some((entry) => entry.id === item.id)).length;
   const finished = draft.selected.length > 0 && completedCount === draft.selected.length;
   const displayed = batch ? batch.records.filter((record) => batch.ids.includes(record.chapter_id!)).map((record) => selectionFor(record, [batch.scene.record])).sort(compareSelection)
@@ -393,12 +420,15 @@ export default function ChapterContinuation({ scene: selectedScene, arc, scope: 
               void persist({ ...draftRef.current, selected, completed, started: Boolean(draftRef.current.currentId) }).then(() => { setNeedsReview(false); setChangedBodies([]); setError(""); }).catch(() => setError(t("draftFailed"))).finally(() => { if (operation.current === abort) { operation.current = null; setBusy(false); } });
             }}>{t(changedBodies.length ? "continuation.acceptBodyChanges" : "continuation.reviewList")}</Button>}
             {draft.needsRead || readBlocked && !draft.currentId ? <Button size="sm" variant="primary" isDisabled={busy || dirty} onPress={() => { if (draft.needsRead) void rereadSaved(); else onRetryRead?.(); }}>{t("retryRead")}</Button>
-              : !finished && <Button size="sm" variant="primary" isDisabled={!loaded || busy || (dirty || needsReview) && !draft.currentId || !draft.selected.length} onPress={() => void startOrContinue()}>{t(!draft.started ? "continuation.start" : draft.currentId ? "continuation.resume" : "continuation.next")}</Button>}
+              : !finished && <>
+                <Button size="sm" variant="primary" isDisabled={!loaded || busy || (dirty || needsReview) && !draft.currentId || !draft.selected.length} onPress={() => { setAutoRunNext(false); setBatchRun(false); void startOrContinue(); }}>{t(!draft.started ? "continuation.start" : draft.currentId ? "continuation.resume" : "continuation.next")}</Button>
+                <Button size="sm" variant="outline" isDisabled={!loaded || busy || dirty || needsReview || !draft.selected.length || Boolean(draft.currentId)} onPress={() => { setAutoRunNext(false); setBatchRun(true); void startOrContinue(); }}>{t("continuation.batchStart")}</Button>
+              </>}
           </Modal.Footer>
         </Modal.Dialog>
       </Modal.Container>
     </RetainedModalBackdrop>
-    {target && <RetainedViewActive.Provider value={active && open}><HierarchyGeneration onPageChange={onGenerationPageChange} key={target.id} node={target} choices={choices} choicesError={choicesError} fixedSetup={draft.setup ?? undefined}
+    {target && <RetainedViewActive.Provider value={active && open}><HierarchyGeneration onPageChange={onGenerationPageChange} key={target.id} node={target} choices={choices} choicesError={choicesError} fixedSetup={draft.setup ?? undefined} autoRun={autoRunNext} autoConfirm={batchRun}
       onSetup={async (setup) => {
         const abort = new AbortController();
         if (!stateRef.current.active || !stateRef.current.open) throw new Error(t("continuation.paused"));

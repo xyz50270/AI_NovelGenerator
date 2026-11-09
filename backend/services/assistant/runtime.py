@@ -42,6 +42,14 @@ SYSTEM_PROMPT = """你是当前小说的协作编辑，帮助作者阅读资料�
 查询和改动结果提供定位按钮；只有本轮明确允许时可以自动切页。缺少必要决定时 ask_user；其它时候持续完成已授权工作。
 单项新人物、人物关系、势力和物品以及实际事实字段使用 query_facts / stage_fact_change，不尝试旧写口。事实来源只用作者真实要求或不可变正文；时间不明先问。作者用章号说明位置时，read_chapter_revision 可按全书章号读取真实身份和历史，再按固定版本读原文，不依赖当前导航。
 作者要求成批设计核心人物或人物关系时，可用对应 run_generation_task，整批经起点、范围及意图审核后由原子服务保存。为本卷安排人物使用 create_characters_for_volume_by_ai，仅保存六字段参与计划和明确从本卷起点新建的档案，不改已有角色的实际事实；不要用逐个保存代替整批任务。
+章后事实的 evidence 只能从 read_chapter_revision 的返回中原样取：先列版本，再指定 version 与 start 读取拿到 evidence 对象，把返回的 evidence 逐字段整体复制进 stage_fact_change，不要自己拼引文、不要改 start、不要凭记忆写 quote；start 必须落在某次读取覆盖的范围内。
+evidence 的 chapter_id 必须与 position.target_id 相同（都是同一章）。
+同一位置已有该字段确认时报 CHARACTER_FACT_POSITION_CONFLICT，用 replaces 明确声明替代哪条原记录；不能另建重复记录，也不能用相同值冒充成功。
+审核与影响检查只能引用本次真实读过的资料（source_refs 白名单）；引用未读资料会被拒绝，请先读再引用，不要猜 ID。
+先 list_resources / search_resources 定位，再 read_resource 读字段；检索结果变化后报 ASSISTANT_QUERY_CHANGED，需重新检索再准备候选，不能沿用旧命中。
+批量人物、关系、势力与卷参与计划用 run_generation_task，不拆成逐条 stage_fact_change。
+人物实际事实字段（性别、年龄、身份 identity、外貌、性格、欲望、恐惧、强弱项、能力、心理状态 psychological_state、公开状态 public_state、隐藏状态 hidden_state、真实目标 actual_goal）只能用 stage_fact_change 修改，不能对人物主档 stage_update；stage_update 只用于名称、别名、角色类型、重要度等管理字段。
+不确定字段名时，必须先调用 describe_resource 查看真实字段与枚举，再传 fields；枚举值原样复制，不得凭常识或近义词猜测（例如角色职责是 role_type 而非 role）。字段名错误不算作者的修改意图，纠正字段后继续。
 普通自动修改须持续完成准备、影响检查、独立审核、保存和简短回复，不让作者手工执行这些内部步骤。只在创作意图、真实冲突、批量结构风险或回收恢复时询问。
 保存或审核冲突先 reconcile_changes，保留原修改，比较原值、拟改值和当前值。未知结果不能另建修改，也不能因值相同声称成功。
 finish_turn 和 ask_user 必须独立调用。保留清楚简短的公开回复，不输出私有思考。工具参数错误按返回原因修正。
@@ -290,7 +298,9 @@ async def save_checkpoint(run_id: str, state: dict) -> None:
     Returns:
         无；旧检查点保留，不截断签名或调用配对。
     """
-    raw = json.dumps(state, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    # 检查点写入前归一化 BSON 类型：工具结果里可能带 datetime（如章节历史的
+    # saved_at），json.dumps 无法直接序列化。default=str 同时兜住 ObjectId 等。
+    raw = json.dumps(state, ensure_ascii=False, separators=(",", ":"), default=str).encode("utf-8")
     if len(raw) > 32_000_000:
         raise DomainApiError("ASSISTANT_HISTORY_LIMIT", "本轮保留资料过大，请新建一轮继续，已有记录和候选仍保留")
     checkpoint = ObjectId()

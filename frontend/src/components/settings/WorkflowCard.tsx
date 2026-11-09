@@ -4,7 +4,7 @@ import { FLOW_INPUT_CLASS } from "@/components/task-flows/TaskFlowForm";
 import { apiGet } from "@/lib/api";
 import { supportsStructuredOutput, type AppConfig } from "@/types/config";
 import type { FlowTask } from "@/types/taskFlow";
-import { Button } from "@heroui/react";
+import { Button, Switch } from "@heroui/react";
 import { useLocale,useTranslations } from "next-intl";
 import { useEffect,useState } from "react";
 
@@ -133,6 +133,65 @@ export function WorkflowCard({ config, onChange }: Props) {
               )}
           </label>
         </div>
+                {/* 资料整理自动追加轮次设置 */}
+        <div className="mt-6 rounded-xl border border-border bg-surface-secondary/20 p-4 sm:p-5">
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <div className="space-y-1">
+              <h3 className="text-sm font-semibold text-foreground">资料整理自动追加轮次</h3>
+              <p className="text-xs text-muted">
+                当 AI 资料整理达到初始轮次或工具调用上限时，自动追加轮数继续运行，无需手动点击“增加轮数继续整理”。
+              </p>
+            </div>
+            <Switch
+              isSelected={Boolean(config.agent_auto_extend_enabled)}
+              onChange={(value) => onChange({ ...config, agent_auto_extend_enabled: value })}
+            >
+              <Switch.Control>
+                <Switch.Thumb />
+              </Switch.Control>
+              <Switch.Content className="text-sm font-medium">
+                {config.agent_auto_extend_enabled ? "已启用" : "已停用"}
+              </Switch.Content>
+            </Switch>
+          </div>
+
+          {config.agent_auto_extend_enabled && (
+            <div className="mt-4 grid gap-4 border-t border-border/60 pt-4 sm:grid-cols-2">
+              <label className="grid gap-2 text-xs font-medium text-muted">
+                <span>单次追加轮数预算 (1 - 16)</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={16}
+                  className={FLOW_INPUT_CLASS}
+                  value={Number(config.agent_auto_extend_rounds ?? 16)}
+                  onChange={(e) => {
+                    const val = Math.min(16, Math.max(1, Number(e.target.value) || 1));
+                    onChange({ ...config, agent_auto_extend_rounds: val });
+                  }}
+                />
+                <span className="text-[11px] text-muted">达到上限时自动追加的模型交互轮数（默认 16 轮，最大 16）</span>
+              </label>
+
+              <label className="grid gap-2 text-xs font-medium text-muted">
+                <span>最大追加次数 (1 - 10)</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={10}
+                  className={FLOW_INPUT_CLASS}
+                  value={Number(config.agent_max_auto_extend_times ?? 1)}
+                  onChange={(e) => {
+                    const val = Math.min(10, Math.max(1, Number(e.target.value) || 1));
+                    onChange({ ...config, agent_max_auto_extend_times: val });
+                  }}
+                />
+                <span className="text-[11px] text-muted">单次任务最多允许连续自动追加的次数（默认 1 次，最大 10 次）</span>
+              </label>
+            </div>
+          )}
+        </div>
+
         {error && (
           <p
             role="alert"

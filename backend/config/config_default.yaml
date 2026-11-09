@@ -84,3 +84,7 @@ llm:
       supports_streaming: true
       supports_json_schema: true
       supports_function_calling: true
+
+agent_auto_extend_enabled: false
+agent_auto_extend_rounds: 16
+agent_max_auto_extend_times: 1
