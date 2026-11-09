@@ -1094,6 +1094,105 @@ async def prepare_undo(novel_id: str, change_id: str, *, run_id: str, key: str, 
     return {**undo, "undo_of": change_id}
 
 
+
+def _resolve_evidence_from_reads(raw: dict, reads: list[dict], target_chapter_id: str) -> dict:
+    """把模型给出的证据定位补全为完整且真实的 evidence。
+
+    Args:
+        raw: 模型提交的 evidence；只保证含 chapter_id / version / start 即可。
+        reads: 本次运行在服务端真实读取过的章节历史片段。
+        target_chapter_id: position 指定的章节，必须与证据同章。
+    Returns:
+        字段完整、引文取自真实读取记录的 evidence。
+    Raises:
+        DomainApiError: 定位无法对应到任何真实读取时。
+    """
+    chapter_id = str(raw.get("chapter_id") or "")
+    if not chapter_id:
+        chapter_id = target_chapter_id
+    if chapter_id != target_chapter_id:
+        raise DomainApiError(
+            "ASSISTANT_FACT_EVIDENCE_REQUIRED",
+            "佐证章节与 position 指定的章节不一致，请用同一章的历史正文作依据",
+            status_code=409,
+        )
+
+    version = raw.get("version")
+    try:
+        version = int(version) if version is not None else None
+    except (TypeError, ValueError):
+        version = None
+
+    candidates = [
+        item for item in reads
+        if item.get("chapter_id") == chapter_id and (version is None or item.get("version") == version)
+    ]
+    if not candidates:
+        raise DomainApiError(
+            "ASSISTANT_FACT_EVIDENCE_REQUIRED",
+            "请先读取该章固定历史版本，再提交依据",
+            status_code=409,
+        )
+
+    # start 必须落在某次真实读取覆盖的区间内；缺省则取最近一次读取起点。
+    try:
+        start = int(raw["start"]) if raw.get("start") is not None else None
+    except (TypeError, ValueError):
+        start = None
+
+    if start is None:
+        chosen = candidates[-1]
+        offset = 0
+    else:
+        chosen = None
+        offset = 0
+        for item in reversed(candidates):
+            base = int(item.get("start") or 0)
+            if start >= base:
+                chosen = item
+                offset = start - base
+                break
+        if chosen is None:
+            raise DomainApiError(
+                "ASSISTANT_FACT_EVIDENCE_REQUIRED",
+                "起始位置不在已读取范围内，请按返回的 next_start 续读后再提交",
+                status_code=409,
+            )
+
+    quote_source = chosen.get("quote") or ""
+    if offset >= len(quote_source):
+        raise DomainApiError(
+            "ASSISTANT_FACT_EVIDENCE_REQUIRED",
+            "起始位置已超出该次读取的正文范围，请重新读取该段后再提交",
+            status_code=409,
+        )
+
+    # 模型若给了 quote 且能在真实读取中定位，则采用（保留其精确范围）；
+    # 否则由服务端截取一段真实原文，避免模型复制长文本失败。
+    model_quote = raw.get("quote")
+    if isinstance(model_quote, str) and model_quote:
+        pos = quote_source.find(model_quote, offset)
+        if pos >= 0:
+            return {
+                "chapter_id": chapter_id,
+                "revision_id": chosen["revision_id"],
+                "version": chosen["version"],
+                "content_hash": chosen["content_hash"],
+                "start": int(chosen.get("start") or 0) + pos,
+                "quote": model_quote,
+            }
+
+    span = min(400, len(quote_source) - offset)
+    return {
+        "chapter_id": chapter_id,
+        "revision_id": chosen["revision_id"],
+        "version": chosen["version"],
+        "content_hash": chosen["content_hash"],
+        "start": int(chosen.get("start") or 0) + offset,
+        "quote": quote_source[offset:offset + span],
+    }
+
+
 async def stage_fact_change(run: dict, request, *, key: str) -> dict:
     """用原事实预览固定修改，不走主档旧写口，不接受模型提供确认。
 
@@ -1131,12 +1230,18 @@ async def stage_fact_change(run: dict, request, *, key: str) -> dict:
         if request.evidence is None:
             raise DomainApiError("ASSISTANT_FACT_EVIDENCE_REQUIRED", "章后变化需要该章真实历史正文中的依据", status_code=409)
         from backend.services.novel.chapter_record_contract import ChapterRecordEvidenceV1
-        evidence = ChapterRecordEvidenceV1.model_validate(request.evidence).model_dump(mode="json")
         stored_run = await BaseRepository("assistant_runs").collection.find_one({"_id": run["_id"], "novel_id": run["novel_id"]})
-        read = next((item for item in stored_run.get("evidence_reads", []) if all(item[field] == evidence[field] for field in ("chapter_id", "revision_id", "version", "content_hash"))
-                     and evidence["start"] >= item["start"] and item["quote"][evidence["start"] - item["start"]:evidence["start"] - item["start"] + len(evidence["quote"])] == evidence["quote"]), None)
-        if not read or evidence["chapter_id"] != position["target_id"]:
-            raise DomainApiError("ASSISTANT_FACT_EVIDENCE_REQUIRED", "请先读取所选章节的固定历史版本，并使用返回的原文片段", status_code=409)
+        reads = stored_run.get("evidence_reads", []) or []
+        if not reads:
+            raise DomainApiError(
+                "ASSISTANT_FACT_EVIDENCE_REQUIRED",
+                "请先读取所选章节的固定历史版本，并使用返回的原文片段",
+                status_code=409,
+            )
+        # 服务端自动补全：模型只需给 chapter_id / version / start（可选 quote），
+        # 其余 revision_id、content_hash 与真实引文由服务端从本次真实读取记录中补齐，
+        # 以免模型无法精确复制长文本而反复失败。引文始终取自服务端实际读到的原文。
+        evidence = _resolve_evidence_from_reads(request.evidence, reads, position["target_id"])
         source = {"kind": "chapter", "evidence": evidence}
     else:
         if request.evidence is not None or len(author_request) > 2000:
