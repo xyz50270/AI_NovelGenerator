@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { Button, Modal } from "@heroui/react";
+import { apiGet } from "@/lib/api";
 import { hierarchyNode, type EntityChoices, type HierarchyNode, type HierarchyRecord } from "@/types/hierarchy";
 import HierarchyGeneration from "./HierarchyGeneration";
 
@@ -55,21 +56,43 @@ export default function AutoComplete(props: AutoCompleteProps) {
   /** 各场景产出的章节，全部完成后一次性交出。 */
   const chapters = useRef<HierarchyRecord[]>([]);
 
+  /** 功能：把一批场景接过章计划阶段。Args: scenes 场景记录。Returns: 无；空列表不改变阶段。 */
+  const startPlans = useCallback((scenes: HierarchyRecord[]) => {
+    if (!scenes.length) return false;
+    setQueue(scenes.map((record) => hierarchyNode("scene", record)));
+    setIndex(0);
+    setPhase("plans");
+    return true;
+  }, []);
+
   /** 场景阶段完成，转入章计划阶段。 */
   const handleScenesSaved = useCallback((records: HierarchyRecord[]) => {
     settled.current = arc.id;
     if (stopped.current) return;
     const scenes = records.filter((record) => record.scene_id && !record.is_deleted);
-    if (!scenes.length) {
-      // 生成成功但没有任何场景：没有可继续的章计划目标，只提示，不假装完成。
-      setNotice(t("autoComplete.noScenes"));
-      return;
-    }
     onScenesSaved(records);
-    setQueue(scenes.map((record) => hierarchyNode("scene", record)));
-    setIndex(0);
-    setPhase("plans");
-  }, [arc.id, onScenesSaved, t]);
+    if (startPlans(scenes)) return;
+    // 本次没有新场景：篇章通常已有场景，只是还没排章计划。
+    // 回退到现有场景里缺章节的那些，继续补计划；全都有章节才收尾。
+    void (async () => {
+      try {
+        const listed = await apiGet<{ data: HierarchyRecord[] }>(`/api/scenes/arc/${arc.id}`);
+        if (stopped.current) return;
+        const existing = listed.data.filter((record) => !record.is_deleted);
+        // 只补真正缺章节的场景，已有正文计划的场景不重排。
+        const counts = await Promise.all(existing.map(async (record) => {
+          const chapters = await apiGet<{ data: HierarchyRecord[] }>(`/api/chapters/scene/${record.scene_id}`);
+          return chapters.data.some((chapter) => !chapter.is_deleted);
+        }));
+        if (stopped.current) return;
+        const pending = existing.filter((_, index) => !counts[index]);
+        if (startPlans(pending)) return;
+        setNotice(t(existing.length ? "autoComplete.allPlanned" : "autoComplete.noScenes"));
+      } catch (failure) {
+        if (!stopped.current) setNotice(failure instanceof Error ? failure.message : t("autoComplete.noScenes"));
+      }
+    })();
+  }, [arc.id, onScenesSaved, startPlans, t]);
 
   /** 单场景章计划完成，推进到下一个场景或收尾。 */
   const handlePlanSaved = useCallback((records: HierarchyRecord[], scene: HierarchyNode) => {
@@ -91,6 +114,7 @@ export default function AutoComplete(props: AutoCompleteProps) {
   // 组件卸载时停止推进，避免离开后仍在跑自动化。
   useEffect(() => () => { stopped.current = true; }, []);
 
+  // 回退读取现有场景期间不留空白：沿用生成弹窗，等目录读完再切阶段。
   if (notice) return (
     <Modal.Backdrop isOpen onOpenChange={(open) => { if (!open) onClose(); }}>
       <Modal.Container size="lg" scroll="inside" className="p-0 sm:p-4">
@@ -111,7 +135,7 @@ export default function AutoComplete(props: AutoCompleteProps) {
 
   return <>
     {/* 阶段一：篇章生成场景，自动生成 + 自动确认 */}
-    {phase === "scenes" && (
+    {phase === "scenes" && !notice && (
       <HierarchyGeneration
         key={`auto-scenes:${arc.id}`}
         node={arc}

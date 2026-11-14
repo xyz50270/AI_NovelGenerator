@@ -3823,7 +3823,8 @@
         "hint": "Auto mode: confirm this generation, plan every new scene, then open chapter writing (body writing still waits for you).",
         "noScenes": "No scenes were generated. Check that the arc plan is complete, or use the single-step entry.",
         "close": "Got it",
-        "run": "Auto-complete arc"
+        "run": "Auto-complete arc",
+        "allPlanned": "Every scene in this arc already has chapter plans; nothing to fill in."
       }
     },
     "volumes": {
