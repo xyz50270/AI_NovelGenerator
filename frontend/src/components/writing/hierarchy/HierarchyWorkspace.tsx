@@ -16,6 +16,7 @@ import ChapterBodyEditor from "./ChapterBodyEditor";
 import PlanningEditor from "./PlanningEditor";
 import HierarchyGeneration from "./HierarchyGeneration";
 import ChapterContinuation, { type SavedChapterBatch } from "./ChapterContinuation";
+import AutoComplete from "./AutoComplete";
 import { registerSavedChapterBatch } from "./chapterPlanBatches";
 import { readChapterPlanConfirmations } from "./chapterPlanConfirmations";
 import PlotSection from "./PlotSection";
@@ -77,9 +78,11 @@ export default function HierarchyWorkspace({ novelId, location, scope = "chapter
   const [editor, setEditor] = useState<{ kind: PlanningKind; parent: HierarchyNode; source: HierarchyNode | null; section?: PlanningSection } | null>(null);
   const [generationNode, setGenerationNode] = useState<HierarchyNode | null>(null);
   const [generationPage, setGenerationPage] = useState(false);
+  /** 正在自动串联「生成场景 → 生成章计划」的篇章。 */
+  const [autoCompleteArc, setAutoCompleteArc] = useState<HierarchyNode | null>(null);
   const generationOrigin = useRef<string | null>(null);
   const [continuationScope, setContinuationScope] = useState<"scene" | "arc">("scene");
-  const [continuation, setContinuation] = useState<{ scene: HierarchyNode; arc: HierarchyNode; scope: "scene" | "arc"; batch?: SavedChapterBatch; locationKey: string; open: boolean } | null>(null);
+  const [continuation, setContinuation] = useState<{ scene: HierarchyNode; arc: HierarchyNode; scope: "scene" | "arc"; batch?: SavedChapterBatch; preselect?: string[]; locationKey: string; open: boolean } | null>(null);
   const continuationRef = useRef(continuation); continuationRef.current = continuation;
   const [batches, setBatches] = useState<{ sceneId: string; items: SavedChapterBatch[] }>({ sceneId: "", items: [] });
   const [batchId, setBatchId] = useState("");
@@ -428,6 +431,7 @@ export default function HierarchyWorkspace({ novelId, location, scope = "chapter
       {creationParents.filter((node) => node.kind !== "scene").map((node) => <div key={node.id} className="flex flex-wrap gap-2">
         <Button size="sm" variant="outline" isDisabled={actionsDisabled || bodyDirty || !readinessById[node.id]?.can_create_child} onPress={() => setEditor({ kind: CHILD_KIND[node.kind as "volume" | "arc" | "scene"], parent: node, source: null })}>{t("createKind", { kind: t(`kinds.${CHILD_KIND[node.kind as "volume" | "arc" | "scene"]}`) })}</Button>
         <Button size="sm" variant="primary" isDisabled={actionsDisabled || bodyDirty || Boolean(generationNode || continuation?.open) || !readinessById[node.id]?.can_refine} onPress={() => { generationOrigin.current = selectedKey; setGenerationNode(node); }}>{t(`generate.${node.kind}`)}</Button>
+        {node.kind === "arc" && <Button size="sm" variant="outline" isDisabled={actionsDisabled || bodyDirty || Boolean(generationNode || continuation?.open || autoCompleteArc) || !readinessById[node.id]?.can_refine} onPress={() => setAutoCompleteArc(node)}>{t("autoComplete.button")}</Button>}
       </div>)}
       {scope === "chapters" && !arcs.length && !loading && volumes.length > 0 && <Button size="sm" variant="outline" isDisabled={actionsDisabled} onPress={() => onArc?.({ volume_id: selected?.record.volume_id ?? volumes[0].id })}>{t("openArcPlanning")}</Button>}
       <TooltipHint text={t("showTrash")}>
@@ -570,8 +574,29 @@ export default function HierarchyWorkspace({ novelId, location, scope = "chapter
       </article>
     </div>
     {editor && !editor.source && <PlanningEditor key={`${editor.kind}:${editor.parent.id}`} {...editor} choices={choices} choicesError={choicesError} onClose={() => setEditor(null)} onSaved={(record) => saved([record], editor.kind)} />}
+    {autoCompleteArc && <RetainedViewActive.Provider value={active}>
+      <AutoComplete
+        key={`auto:${autoCompleteArc.id}`}
+        arc={autoCompleteArc}
+        volume={ancestors.find((node) => node.kind === "volume") ?? autoCompleteArc}
+        choices={choices}
+        choicesError={choicesError}
+        onScenesSaved={(records) => { if (records[0]) setRefresh((value) => value + 1); }}
+        onPlansReady={(targetArc, scenes, chapterIds) => {
+          setAutoCompleteArc(null);
+          const first = scenes[0];
+          if (!first) return;
+          // 交给既有逐章写作：篇章范围 + 批量模式，停在“开始生成”前等作者确认模型配置
+          setRecordsTab(false); setBodyTab(true);
+          setContinuation({ scene: first, arc: targetArc, scope: "arc", preselect: chapterIds, locationKey: selectedKey, open: true });
+          setRefresh((value) => value + 1);
+        }}
+        onClose={() => setAutoCompleteArc(null)}
+      />
+    </RetainedViewActive.Provider>}
     {generationNode && <RetainedViewActive.Provider value={active && selectedKey === generationOrigin.current}>
       <HierarchyGeneration onPageChange={setGenerationPage} key={generationNode.id} node={generationNode} choices={choices} choicesError={choicesError}
+        onAutoComplete={generationNode.kind === "arc" ? () => { setAutoCompleteArc(generationNode); setGenerationNode(null); } : undefined}
         planOrigin={generationNode.kind === "scene" ? { scene: generationNode, arc: ancestors.find((node) => node.kind === "arc")!, volume: ancestors.find((node) => node.kind === "volume")! } : undefined}
         onClose={() => setGenerationNode(null)} onSaved={async (records, kind, confirmationKey, confirmedIds, origin) => {
           if (generationNode.kind !== "scene" || kind !== "chapter" || !confirmedIds?.length || !origin) {
@@ -593,7 +618,7 @@ export default function HierarchyWorkspace({ novelId, location, scope = "chapter
           setRefresh((value) => value + 1);
         }} />
     </RetainedViewActive.Provider>}
-    {continuation && <ChapterContinuation onGenerationPageChange={setGenerationPage} key={`${novelId}:${continuation.scope}:${continuation.scope === "arc" ? continuation.arc.id : continuation.scene.id}:${continuation.batch?.confirmationKey ?? "existing"}`} scene={continuation.scene} arc={continuation.arc} scope={continuation.scope} batch={continuation.batch} open={continuation.open && continuation.locationKey === selectedKey && bodyTab} dirty={bodyDirty || planDirty || planSaving || bodySaving} readBlocked={Boolean(error) || savedReadFailed || loading || Boolean(continuation.batch && batchError)} readError={error && savedReadFailed ? `${t("savedReadFailed")} ${error}` : error || (continuation.batch ? batchError : "")} onRetryRead={() => setRefresh((value) => value + 1)} choices={choices} choicesError={choicesError}
+    {continuation && <ChapterContinuation onGenerationPageChange={setGenerationPage} key={`${novelId}:${continuation.scope}:${continuation.scope === "arc" ? continuation.arc.id : continuation.scene.id}:${continuation.batch?.confirmationKey ?? "existing"}`} scene={continuation.scene} arc={continuation.arc} scope={continuation.scope} batch={continuation.batch} preselect={continuation.preselect} open={continuation.open && continuation.locationKey === selectedKey && bodyTab} dirty={bodyDirty || planDirty || planSaving || bodySaving} readBlocked={Boolean(error) || savedReadFailed || loading || Boolean(continuation.batch && batchError)} readError={error && savedReadFailed ? `${t("savedReadFailed")} ${error}` : error || (continuation.batch ? batchError : "")} onRetryRead={() => setRefresh((value) => value + 1)} choices={choices} choicesError={choicesError}
       onClose={() => {
         setContinuation((current) => current ? { ...current, open: false } : null);
         requestAnimationFrame(() => { if (scopeRef.current.active && scopeRef.current.key === continuation.locationKey) document.getElementById(continuation.batch ? `chapter-batch-${continuation.batch.confirmationKey}` : `chapter-continuation-${scopeRef.current.id}`)?.focus(); });

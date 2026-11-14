@@ -3816,7 +3816,15 @@
       "chapterRecordsDeleteBlocked": "These {count} chapter confirmation records still protect their source text. This item cannot be permanently deleted; delete the whole novel to remove everything.",
       "sceneChapters": "Chapters in this scene",
       "noChaptersToExpand": "No chapters yet",
-      "openScene": "Back to this scene"
+      "openScene": "Back to this scene",
+      "autoComplete": {
+        "button": "Auto-complete arc",
+        "title": "Auto-complete arc",
+        "hint": "Auto mode: confirm this generation, plan every new scene, then open chapter writing (body writing still waits for you).",
+        "noScenes": "No scenes were generated. Check that the arc plan is complete, or use the single-step entry.",
+        "close": "Got it",
+        "run": "Auto-complete arc"
+      }
     },
     "volumes": {
       "title": "Volume Structure",

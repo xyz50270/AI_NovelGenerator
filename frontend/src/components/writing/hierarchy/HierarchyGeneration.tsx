@@ -33,6 +33,10 @@ interface GenerationProps {
   autoRun?: boolean;
   /** 批量写作：候选生成后自动确认保存。 */
   autoConfirm?: boolean;
+  /** 自动完成本章：在生成弹窗内说明本次会自动串到下一步。 */
+  autoHint?: string;
+  /** 篇章生成弹窗内的“自动完成本章”入口；交给上层改用自动编排。 */
+  onAutoComplete?: () => void;
   onSaved: (records: HierarchyRecord[], kind: HierarchyNode["kind"], confirmationKey: string, confirmedIds?: string[], planOrigin?: PlanGenerationOrigin) => void | Promise<void>; onClose: () => void;
 }
 // 本机存储失败时，重开同一章仍保留已收到的正式响应。
@@ -44,7 +48,7 @@ export default function HierarchyGeneration(props: GenerationProps) {
   return <GenerationEditor key={`${props.node.record.novel_id}:${props.node.kind}:${props.node.id}`} {...props} />;
 }
 
-function GenerationEditor({ node, choices, choicesError, fixedSetup, planOrigin, onSetup, onSaved, onClose, onPageChange, autoRun, autoConfirm }: GenerationProps) {
+function GenerationEditor({ node, choices, choicesError, fixedSetup, planOrigin, onSetup, onSaved, onClose, onPageChange, autoRun, autoConfirm, autoHint, onAutoComplete }: GenerationProps) {
   const t = useTranslations("writing.hierarchy");
   const active = useContext(RetainedViewActive);
   const flow = useTaskFlow(TASKS[node.kind]);
@@ -382,6 +386,7 @@ function GenerationEditor({ node, choices, choicesError, fixedSetup, planOrigin,
     catch (failure) { setError(failure instanceof Error ? failure.message : t("draftFailed")); }
   };
   const generationBody = active ? <>
+          {autoHint && <p role="status" className="mb-4 border-l-2 border-accent pl-3 text-sm">{autoHint}</p>}
           {inPage && flow.error && flow.error !== error && <RelationEditorErrorSummary message={flow.error} />}
           {error && <RelationEditorErrorSummary message={error} fieldErrors={errors} className="mb-4" />}
           {legacyBasisMissing && <p role="alert" className="mb-4 border-y border-amber-500/50 py-3 text-sm">{t("legacyCandidateBasisMissing")}</p>}
@@ -447,6 +452,7 @@ function GenerationEditor({ node, choices, choicesError, fixedSetup, planOrigin,
             link.href = url; link.download = `${node.record.title}-candidate.json`; void downloadExport(link); URL.revokeObjectURL(url);
           }}>{t("exportDraft")}</Button>}
           {preview && <Button size="sm" variant="outline" isDisabled={candidateLocked} onPress={() => void discardCandidate()}>{t("discardCandidate")}</Button>}
+          {!inPage && !preview && !savedResult && node.kind === "arc" && onAutoComplete && <Button size="sm" variant="outline" isDisabled={loading || running || saving || !restored} onPress={onAutoComplete}>{t("autoComplete.run")}</Button>}
           {(!inPage || preview) && <Button size="sm" variant="primary" isDisabled={loading || !restored || running || saving || (preview ? stale || (legacyBasisMissing && !command.current && !savedResult) : flow.loading || !flow.definition || !setupMatches)} onPress={() => void (preview ? confirm() : generate())}>{saving ? t("saving") : savedResult ? t("retrySavedRefresh") : preview ? t("confirmCandidate") : t("generateNow")}</Button>}
   </>;
   if (inPage) return active ? <section ref={generationRegion} tabIndex={-1} aria-label={t("generationWorkspace")} className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden outline-none">

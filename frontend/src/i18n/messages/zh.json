@@ -3816,7 +3816,15 @@
       "chapterRecordsDeleteBlocked": "这 {count} 条章后确认记录仍保护原文来源，不能永久删除；如需全部清理，请删除整部作品。",
       "sceneChapters": "场景内章节",
       "noChaptersToExpand": "还没有章节",
-      "openScene": "返回所属场景"
+      "openScene": "返回所属场景",
+      "autoComplete": {
+        "button": "自动完成本章",
+        "title": "自动完成本章",
+        "hint": "自动模式：自动确认本次生成，逐个为新场景生成章计划，最后打开逐章写作（不会自动开始写正文）。",
+        "noScenes": "本次没有生成任何场景，已停止。请检查篇章规划是否完整，或改用单个生成入口。",
+        "close": "知道了",
+        "run": "自动完成本章"
+      }
     },
     "volumes": {
       "title": "卷结构",

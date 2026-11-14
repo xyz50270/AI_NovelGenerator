@@ -35,10 +35,12 @@ interface ContinuationDraft {
 }
 
 /** 功能：按作者选定的场景或篇章内章节逐章审核，保存后等待手动继续。Args: props 固定范围、显示状态、未保存修改与保存回调。Returns: 本地列表和原单章生成弹窗。 */
-export default function ChapterContinuation({ scene: selectedScene, arc, scope: selectedScope = "scene", batch, open, dirty, readBlocked = false, readError = "", onRetryRead, choices, choicesError, onClose, onSaved, onGenerationPageChange }: {
+export default function ChapterContinuation({ scene: selectedScene, arc, scope: selectedScope = "scene", batch, preselect, open, dirty, readBlocked = false, readError = "", onRetryRead, choices, choicesError, onClose, onSaved, onGenerationPageChange }: {
   scene: HierarchyNode; open: boolean; dirty: boolean; choices: EntityChoices; choicesError?: string;
   scope?: "scene" | "arc"; arc?: HierarchyNode;
   batch?: SavedChapterBatch;
+  /** 自动完成本章产出的章节：目录读回后预选一次，作者只需核对模型配置。 */
+  preselect?: string[];
   readBlocked?: boolean; readError?: string; onRetryRead?: () => void;
   onClose: () => void; onSaved: (record: HierarchyRecord) => void; onGenerationPageChange?: (visible: boolean) => void;
 }) {
@@ -143,6 +145,32 @@ export default function ChapterContinuation({ scene: selectedScene, arc, scope: 
   // 范围和启动记录由外层稳定 key 固定；打开时才读取目录。
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, active, key, t]);
+
+  /** 已应用过的预选批次；同一批只选一次，新的一批仍可生效。 */
+  const preselected = useRef("");
+  useEffect(() => {
+    if (!open || !active || !loaded || !preselect?.length || !scenes.length) return;
+    // 同一批预选重复渲染不再改动清单，避免覆盖作者的勾选。
+    const signature = [...preselect].sort().join(",");
+    if (preselected.current === signature) return;
+    preselected.current = signature;
+    // 已经开始写作的清单固定不变。
+    if (draftRef.current.started) return;
+    const ids = new Set(preselect);
+    // 保留作者原有勾选，只并入本次自动完成产出且尚未在清单里的章节。
+    const added = rows.filter((row) => ids.has(row.chapter_id!) && !row.is_deleted
+      && !draftRef.current.selected.some((item) => item.id === row.chapter_id))
+      .map((row) => selectionFor(row));
+    // 单次写作上限 20 章，多出的留在目录里，不在作者不知情时丢章。
+    const picked = [...draftRef.current.selected, ...added].sort(compareSelection).slice(0, 20);
+    if (!added.length) return;
+    const next = { ...draftRef.current, selected: picked };
+    draftRef.current = next;
+    if (mounted.current) setDraft(next);
+    void persist(next).catch(() => setError(t("draftFailed")));
+  // 仅在首次目录读回时执行；后续勾选变化由作者触发。
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, active, loaded, rows, scenes, preselect]);
 
   // 开始、恢复和继续都重读整个选定范围；不能把失效章节换成另一个目标。
   const inspect = async (value: ContinuationDraft, signal: AbortSignal) => {
