@@ -54,6 +54,8 @@ export default function ChapterContinuation({ scene: selectedScene, arc, scope: 
   const [rows, setRows] = useState<HierarchyRecord[]>([]);
   const [scenes, setScenes] = useState<HierarchyRecord[]>([scene.record]);
   const [loaded, setLoaded] = useState(false);
+  /** 目录（场景与章节列表）是否已读完；预选必须等它，否则会拿到空列表。 */
+  const [catalogReady, setCatalogReady] = useState(false);
   const [busy, setBusy] = useState(false);
   const [stopping, setStopping] = useState(false);
   const [error, setError] = useState("");
@@ -139,7 +141,10 @@ export default function ChapterContinuation({ scene: selectedScene, arc, scope: 
     if (!open || !active) { if (!stoppingRef.current) { operation.current?.abort(); operation.current = null; setBusy(false); } return; }
     const abort = new AbortController();
     readCatalog(abort.signal)
-      .then((catalog) => { if (!abort.signal.aborted) { setRows(catalog.chapters); setScenes(catalog.scenes); } })
+      .then((catalog) => {
+        if (abort.signal.aborted) return;
+        setRows(catalog.chapters); setScenes(catalog.scenes); setCatalogReady(true);
+      })
       .catch((failure) => { if (!abort.signal.aborted) setError(failure instanceof Error ? failure.message : t("loadFailed")); });
     return () => abort.abort();
   // 范围和启动记录由外层稳定 key 固定；打开时才读取目录。
@@ -149,7 +154,8 @@ export default function ChapterContinuation({ scene: selectedScene, arc, scope: 
   /** 已应用过的预选批次；同一批只选一次，新的一批仍可生效。 */
   const preselected = useRef("");
   useEffect(() => {
-    if (!open || !active || !loaded || !preselect?.length || !scenes.length) return;
+    // 必须等目录读完：本地草稿先就绪时 rows 还是空的，提前标记会让本批永远不生效。
+    if (!open || !active || !loaded || !catalogReady || !preselect?.length || !scenes.length) return;
     // 同一批预选重复渲染不再改动清单，避免覆盖作者的勾选。
     const signature = [...preselect].sort().join(",");
     if (preselected.current === signature) return;
@@ -170,7 +176,7 @@ export default function ChapterContinuation({ scene: selectedScene, arc, scope: 
     void persist(next).catch(() => setError(t("draftFailed")));
   // 仅在首次目录读回时执行；后续勾选变化由作者触发。
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, active, loaded, rows, scenes, preselect]);
+  }, [open, active, loaded, catalogReady, rows, scenes, preselect]);
 
   // 开始、恢复和继续都重读整个选定范围；不能把失效章节换成另一个目标。
   const inspect = async (value: ContinuationDraft, signal: AbortSignal) => {
