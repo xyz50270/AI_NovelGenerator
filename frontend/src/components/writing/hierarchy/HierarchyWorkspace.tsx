@@ -581,6 +581,7 @@ export default function HierarchyWorkspace({ novelId, location, scope = "chapter
         volume={ancestors.find((node) => node.kind === "volume") ?? autoCompleteArc}
         choices={choices}
         choicesError={choicesError}
+        onGenerationPageChange={setGenerationPage}
         onScenesSaved={(records) => { if (records[0]) setRefresh((value) => value + 1); }}
         onPlansReady={(targetArc, scenes, chapterIds) => {
           setAutoCompleteArc(null);

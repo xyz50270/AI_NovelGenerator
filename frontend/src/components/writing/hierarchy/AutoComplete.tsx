@@ -16,6 +16,8 @@ export interface AutoCompleteProps {
   choices: EntityChoices;
   choicesError?: string;
   onClose: () => void;
+  /** 生成页显隐：自动流程跑起来后要占满工作区，不能和目录各占一半。 */
+  onGenerationPageChange?: (visible: boolean) => void;
   /** 场景保存后刷新目录。 */
   onScenesSaved: (records: HierarchyRecord[]) => void;
   /**
@@ -37,7 +39,7 @@ export interface AutoCompleteProps {
  * 逐章写作不在此处启动，交给调用方打开既有逐章写作，由作者确认模型配置后开始。
  */
 export default function AutoComplete(props: AutoCompleteProps) {
-  const { arc, volume, choices, choicesError, onClose, onScenesSaved, onPlansReady } = props;
+  const { arc, volume, choices, choicesError, onClose, onScenesSaved, onPlansReady, onGenerationPageChange } = props;
   const t = useTranslations("writing.hierarchy");
 
   const [phase, setPhase] = useState<AutoPhase>("scenes");
@@ -118,6 +120,7 @@ export default function AutoComplete(props: AutoCompleteProps) {
         autoRun
         autoConfirm
         autoHint={t("autoComplete.hint")}
+        onPageChange={onGenerationPageChange}
         onSaved={async (records) => { handleScenesSaved(records); }}
         onClose={() => { if (!stopped.current && settled.current !== arc.id) { stopped.current = true; onClose(); } }}
       />
@@ -134,6 +137,7 @@ export default function AutoComplete(props: AutoCompleteProps) {
         autoRun
         autoConfirm
         autoHint={t("autoComplete.hint")}
+        onPageChange={onGenerationPageChange}
         onSaved={async (records) => { handlePlanSaved(records, currentScene); }}
         onClose={() => { if (!stopped.current && settled.current !== currentScene.id) { stopped.current = true; onClose(); } }}
       />
